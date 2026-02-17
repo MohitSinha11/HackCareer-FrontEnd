@@ -38,7 +38,7 @@ export default function MyTasks({ tasks, meetings, onCompleteTask }) {
       <div className="rounded-xl border border-slate-200 bg-white p-4">
         <h2 className="text-lg font-semibold text-slate-900">My Tasks</h2>
         {message ? <p className="mt-2 text-sm text-slate-700">{message}</p> : null}
-        <ul className="mt-3 space-y-2 text-sm">
+        <ul className="mt-3 max-h-[28rem] space-y-2 overflow-y-auto pr-1 text-sm">
           {tasks.map((task) => (
             <li key={task.id} className="rounded-md bg-slate-50 px-3 py-2">
               <p className="font-medium">{task.title}</p>
@@ -113,7 +113,7 @@ export default function MyTasks({ tasks, meetings, onCompleteTask }) {
 
       <div className="rounded-xl border border-slate-200 bg-white p-4">
         <h2 className="text-lg font-semibold text-slate-900">My Meetings</h2>
-        <ul className="mt-3 space-y-2 text-sm">
+        <ul className="mt-3 max-h-[28rem] space-y-2 overflow-y-auto pr-1 text-sm">
           {meetings.map((meeting) => (
             <li key={meeting.id} className="rounded-md bg-slate-50 px-3 py-2">
               <p className="font-medium">{meeting.title}</p>

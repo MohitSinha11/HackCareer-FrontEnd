@@ -5,6 +5,43 @@ const STORAGE_KEYS = {
   currentUser: 'hackcareer_current_user',
 };
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === 'true';
+
+let demoDb = {
+  users: [
+    {
+      id: 1,
+      name: 'HackCareer Admin',
+      email: 'admin@hackcareer.com',
+      role: 'admin',
+      password: 'Admin@123',
+    },
+    {
+      id: 2,
+      name: 'Demo Mentor',
+      email: 'mentor1@hackcareer.com',
+      role: 'mentor',
+      password: 'Mentor@123',
+      about: 'Backend engineer with 6 years of experience',
+      review: 'Great mentor',
+      rating: 4.8,
+    },
+    {
+      id: 3,
+      name: 'Demo Mentee',
+      email: 'mentee1@hackcareer.com',
+      role: 'mentee',
+      password: 'Mentee@123',
+      about: 'Final year CSE student',
+      bio: 'Final year CSE student',
+      mentorId: 2,
+    },
+  ],
+  tasks: [],
+  meetings: [],
+};
+
 const AuthContext = createContext(null);
 
 function readStorage(key, fallback) {
@@ -46,7 +83,11 @@ async function parseJsonResponse(response) {
 }
 
 async function apiRequest(path, { method = 'GET', token, body } = {}) {
-  const response = await fetch(path, {
+  const requestUrl = path.startsWith('http://') || path.startsWith('https://')
+    ? path
+    : `${API_BASE_URL}${path}`;
+
+  const response = await fetch(requestUrl, {
     method,
     headers: token ? authHeaders(token) : { 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
@@ -146,6 +187,40 @@ export function AuthProvider({ children }) {
   const [tasks, setTasks] = useState([]);
   const [meetings, setMeetings] = useState([]);
 
+  const loadDemoRoleData = useCallback((user) => {
+    if (!user) {
+      setUsers([]);
+      setTasks([]);
+      setMeetings([]);
+      return;
+    }
+
+    if (user.role === 'admin') {
+      setUsers(demoDb.users.filter((item) => item.role !== 'admin').map(({ password, ...rest }) => rest));
+      setTasks([]);
+      setMeetings([]);
+      return;
+    }
+
+    if (user.role === 'mentor') {
+      setUsers(
+        demoDb.users
+          .filter((item) => item.role === 'mentee' && item.mentorId === user.id)
+          .map(({ password, ...rest }) => rest),
+      );
+      setTasks(demoDb.tasks.filter((task) => task.mentorId === user.id));
+      setMeetings(demoDb.meetings.filter((meeting) => meeting.mentorId === user.id));
+      return;
+    }
+
+    if (user.role === 'mentee') {
+      const mentor = demoDb.users.find((item) => item.role === 'mentor' && item.id === user.mentorId);
+      setUsers(mentor ? [{ ...mentor, password: undefined }] : []);
+      setTasks(demoDb.tasks.filter((task) => task.menteeId === user.id));
+      setMeetings(demoDb.meetings.filter((meeting) => meeting.menteeId === user.id));
+    }
+  }, []);
+
   const resetRoleData = useCallback(() => {
     setUsers([]);
     setTasks([]);
@@ -211,6 +286,10 @@ export function AuthProvider({ children }) {
       if (!activeToken || !user) {
         return;
       }
+      if (DEMO_MODE) {
+        loadDemoRoleData(user);
+        return;
+      }
 
       if (user.role === 'admin') {
         await loadAdminData(activeToken);
@@ -226,7 +305,7 @@ export function AuthProvider({ children }) {
         await loadMenteeData(activeToken, user);
       }
     },
-    [loadAdminData, loadMenteeData, loadMentorData],
+    [loadAdminData, loadMenteeData, loadMentorData, loadDemoRoleData],
   );
 
   useEffect(() => {
@@ -256,6 +335,36 @@ export function AuthProvider({ children }) {
   }, [currentUser]);
 
   const login = async ({ email, password, role }) => {
+    if (DEMO_MODE) {
+      const match = demoDb.users.find(
+        (user) =>
+          user.email.toLowerCase() === email.trim().toLowerCase() &&
+          user.password === password &&
+          user.role === normalizeRole(role),
+      );
+
+      if (!match) {
+        return { ok: false, message: 'Invalid credentials for demo mode.' };
+      }
+
+      const loggedInUser = {
+        id: match.id,
+        name: match.name,
+        email: match.email,
+        role: match.role,
+        about: match.about,
+        bio: match.bio,
+        review: match.review,
+        rating: match.rating,
+        mentorId: match.mentorId,
+      };
+
+      setToken('demo-token');
+      setCurrentUser(loggedInUser);
+      loadDemoRoleData(loggedInUser);
+      return { ok: true };
+    }
+
     try {
       const payload = await apiRequest('/api/auth/login', {
         method: 'POST',
@@ -285,6 +394,27 @@ export function AuthProvider({ children }) {
   };
 
   const signupAdmin = async ({ fullName, email, password }) => {
+    if (DEMO_MODE) {
+      const nextId = Math.max(...demoDb.users.map((user) => user.id)) + 1;
+      demoDb.users.push({
+        id: nextId,
+        name: fullName.trim(),
+        email: email.trim().toLowerCase(),
+        role: 'admin',
+        password,
+      });
+      const loggedInUser = {
+        id: nextId,
+        name: fullName.trim(),
+        email: email.trim().toLowerCase(),
+        role: 'admin',
+      };
+      setToken('demo-token');
+      setCurrentUser(loggedInUser);
+      loadDemoRoleData(loggedInUser);
+      return { ok: true };
+    }
+
     try {
       const payload = await apiRequest('/api/auth/admin-signup', {
         method: 'POST',
@@ -320,6 +450,30 @@ export function AuthProvider({ children }) {
   };
 
   const createUser = async ({ name, email, role, password, about = '' }) => {
+    if (DEMO_MODE) {
+      const nextId = Math.max(...demoDb.users.map((user) => user.id)) + 1;
+      const user = {
+        id: nextId,
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        role,
+        password,
+      };
+      if (role === 'mentor') {
+        user.about = about;
+        user.review = 'No reviews yet.';
+        user.rating = 0;
+      } else {
+        user.about = about;
+        user.bio = about;
+      }
+      demoDb.users.push(user);
+      if (currentUser) {
+        loadDemoRoleData(currentUser);
+      }
+      return { ok: true };
+    }
+
     if (!token) {
       return { ok: false, message: 'Please log in first.' };
     }
@@ -357,6 +511,18 @@ export function AuthProvider({ children }) {
   };
 
   const assignMentor = async ({ mentorId, menteeId }) => {
+    if (DEMO_MODE) {
+      const mentee = demoDb.users.find((user) => user.id === Number(menteeId) && user.role === 'mentee');
+      if (!mentee) {
+        return { ok: false, message: 'Mentee not found.' };
+      }
+      mentee.mentorId = Number(mentorId);
+      if (currentUser) {
+        loadDemoRoleData(currentUser);
+      }
+      return { ok: true };
+    }
+
     if (!token) {
       return { ok: false, message: 'Please log in first.' };
     }
@@ -379,6 +545,28 @@ export function AuthProvider({ children }) {
   };
 
   const createTask = async ({ menteeId, title, description, dueDate }) => {
+    if (DEMO_MODE) {
+      const taskId = demoDb.tasks.length ? Math.max(...demoDb.tasks.map((task) => task.id)) + 1 : 1;
+      const task = {
+        id: taskId,
+        mentorId: currentUser.id,
+        menteeId: Number(menteeId),
+        title: title.trim(),
+        description: description.trim(),
+        dueDate,
+        status: 'pending',
+        completedAt: null,
+        menteeReviewForMentor: null,
+        menteeRatingForMentor: null,
+        mentorReviewForMentee: null,
+        mentorRatingForMentee: null,
+        createdAt: new Date().toISOString(),
+      };
+      demoDb.tasks.unshift(task);
+      setTasks((prev) => mergeById([task, ...prev]));
+      return { ok: true };
+    }
+
     if (!token) {
       return { ok: false, message: 'Please log in first.' };
     }
@@ -403,6 +591,19 @@ export function AuthProvider({ children }) {
   };
 
   const completeTask = async ({ taskId, rating, comment }) => {
+    if (DEMO_MODE) {
+      const task = demoDb.tasks.find((item) => item.id === Number(taskId));
+      if (!task) {
+        return { ok: false, message: 'Task not found.' };
+      }
+      task.status = 'done';
+      task.completedAt = task.completedAt || new Date().toISOString();
+      task.menteeRatingForMentor = Number(rating);
+      task.menteeReviewForMentor = comment.trim();
+      setTasks((prev) => prev.map((item) => (item.id === task.id ? { ...item, ...task } : item)));
+      return { ok: true };
+    }
+
     if (!token) {
       return { ok: false, message: 'Please log in first.' };
     }
@@ -425,6 +626,17 @@ export function AuthProvider({ children }) {
   };
 
   const reviewTask = async ({ taskId, rating, comment }) => {
+    if (DEMO_MODE) {
+      const task = demoDb.tasks.find((item) => item.id === Number(taskId));
+      if (!task) {
+        return { ok: false, message: 'Task not found.' };
+      }
+      task.mentorRatingForMentee = Number(rating);
+      task.mentorReviewForMentee = comment.trim();
+      setTasks((prev) => prev.map((item) => (item.id === task.id ? { ...item, ...task } : item)));
+      return { ok: true };
+    }
+
     if (!token) {
       return { ok: false, message: 'Please log in first.' };
     }
@@ -447,6 +659,25 @@ export function AuthProvider({ children }) {
   };
 
   const createMeeting = async ({ menteeId, title, date, time, meetingLink }) => {
+    if (DEMO_MODE) {
+      const meetingId = demoDb.meetings.length ? Math.max(...demoDb.meetings.map((meeting) => meeting.id)) + 1 : 1;
+      const meeting = {
+        id: meetingId,
+        mentorId: currentUser.id,
+        menteeId: Number(menteeId),
+        title: title.trim() || 'Mentorship Meeting',
+        agenda: title.trim(),
+        date,
+        time,
+        scheduledAt: `${date}T${time}:00`,
+        meetingLink: String(meetingLink || '').trim(),
+        createdAt: new Date().toISOString(),
+      };
+      demoDb.meetings.unshift(meeting);
+      setMeetings((prev) => mergeById([meeting, ...prev]));
+      return { ok: true };
+    }
+
     if (!token) {
       return { ok: false, message: 'Please log in first.' };
     }
@@ -472,6 +703,16 @@ export function AuthProvider({ children }) {
   };
 
   const loadMentorMenteeItems = async (menteeId) => {
+    if (DEMO_MODE) {
+      setTasks(demoDb.tasks.filter((task) => task.menteeId === Number(menteeId) && task.mentorId === currentUser.id));
+      setMeetings(
+        demoDb.meetings.filter(
+          (meeting) => meeting.menteeId === Number(menteeId) && meeting.mentorId === currentUser.id,
+        ),
+      );
+      return;
+    }
+
     if (!token || !menteeId) {
       setTasks([]);
       setMeetings([]);
